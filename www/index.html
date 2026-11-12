@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Point cloud viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d1117; overflow: hidden; }
+  canvas { display: block; }
+  #status {
+    position: fixed; top: 12px; left: 12px; padding: 8px 12px;
+    font: 13px/1.4 system-ui, sans-serif; color: #e6edf3;
+    background: rgba(22,27,34,.85); border: 1px solid #30363d; border-radius: 6px;
+  }
+  #status.ok  { border-color: #2ea043; }
+  #status.bad { border-color: #da3633; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="status">connecting…</div>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const WS_URL = "ws://localhost:9002";
+
+// ---------- three.js scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 1000);
+camera.position.set(2.5, 2, 2.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.AxesHelper(1.2));
+
+const points = new THREE.Points(
+  new THREE.BufferGeometry(),
+  new THREE.PointsMaterial({ size: 0.015, vertexColors: true })
+);
+points.frustumCulled = false;
+scene.add(points);
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// ---------- point cloud update ----------
+function updateCloud(buffer) {
+  const positions = new Float32Array(buffer);          // x0 y0 z0 x1 y1 z1 ...
+  const n = positions.length / 3;
+
+  // colour by height (z): blue -> red
+  const colors = new Float32Array(positions.length);
+  const c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    const t = (positions[3 * i + 2] + 1) / 2;
+    c.setHSL(0.66 * (1 - t), 0.9, 0.55);
+    colors.set([c.r, c.g, c.b], 3 * i);
+  }
+
+  const old = points.geometry;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("color",    new THREE.BufferAttribute(colors, 3));
+  points.geometry = geo;
+  old.dispose();
+  return n;
+}
+
+// ---------- websocket (with auto-reconnect) ----------
+const statusEl = document.getElementById("status");
+const setStatus = (text, cls = "") => { statusEl.textContent = text; statusEl.className = cls; };
+
+function connect() {
+  const ws = new WebSocket(WS_URL);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen  = () => setStatus("connected, waiting for data…", "ok");
+  ws.onclose = () => { setStatus("disconnected, retrying…", "bad"); setTimeout(connect, 1500); };
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (ev) => {
+    if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength % 12 !== 0) return;
+    const n = updateCloud(ev.data);
+    setStatus(`${n.toLocaleString()} points · ${(ev.data.byteLength / 1024).toFixed(0)} KB`, "ok");
+  };
+}
+connect();
+</script>
+</body>
+</html>

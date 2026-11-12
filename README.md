@@ -1,7 +1,6 @@
-# Livox Wall Hazard Identification
+# Livox HTML GUI
 
-Pointing the livox in vertical orientation to a wall , identifies wall features and hazards and display on web.
-
+Displays the livox data on an html page
 
 
 ## Assumptions
